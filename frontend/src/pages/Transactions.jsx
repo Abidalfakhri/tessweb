@@ -1,399 +1,635 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowUpRight, ArrowDownRight, Edit3, Trash2, Plus, X, Filter, Search, Wallet, Receipt } from 'lucide-react';
-import { formatCurrency } from '../utils/formatCurrency';
-import dummyCategories from '../data/dummyCategories';
-import dummyTransactions from '../data/dummyTransactions';
-
-const formatNumberWithDots = (value) => {
-  const num = value.replace(/\D/g, '');
-  return num.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-};
+import React, { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Plus,
+  TrendingUp,
+  TrendingDown,
+  Search,
+  Filter,
+  Calendar,
+  X,
+  Edit2,
+  Trash2,
+  Check,
+  ArrowLeft,
+} from "lucide-react";
+import { formatCurrency } from "../utils/formatCurrency";
 
 export default function Transactions() {
-  const [transactions, setTransactions] = useState(dummyTransactions);
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialType = searchParams.get("type") || "";
+
+  const [transactions, setTransactions] = useState([]);
+  const [filteredTransactions, setFilteredTransactions] = useState([]);
+  const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [filterType, setFilterType] = useState('all'); // all, income, expense
-  const [searchQuery, setSearchQuery] = useState('');
-  const [form, setForm] = useState({
-    type: 'expense',
-    category: '',
-    amount: '',
-    date: new Date().toISOString().split('T')[0],
-    description: '',
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("all");
+  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState(null);
+
+  // Form state
+  const [formData, setFormData] = useState({
+    type: initialType || "expense",
+    category: "",
+    amount: "",
+    date: new Date().toISOString().split("T")[0],
+    description: "",
   });
 
-  // Filter transactions
-  const filteredTransactions = transactions.filter((tx) => {
-    const matchType = filterType === 'all' || tx.type === filterType;
-    const matchSearch = tx.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                       (tx.description || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchType && matchSearch;
-  });
+  // Categories
+  const categories = {
+    income: ["Gaji", "Freelance", "Investasi", "Bonus", "Lainnya"],
+    expense: [
+      "Makanan",
+      "Transport",
+      "Belanja",
+      "Tagihan",
+      "Hiburan",
+      "Kesehatan",
+      "Pendidikan",
+      "Lainnya",
+    ],
+  };
 
-  // Calculate summary
-  const summary = transactions.reduce(
-    (acc, tx) => {
-      if (tx.type === 'income') acc.income += tx.amount;
-      else acc.expense += tx.amount;
-      return acc;
-    },
-    { income: 0, expense: 0 }
-  );
+  // Extract userId from JWT
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.log("❌ No token found, redirecting to login");
+      navigate("/login");
+      return;
+    }
+    
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      console.log("✅ JWT Payload:", payload);
+      
+      const userId = payload.userId || payload.id;
+      
+      if (!userId) {
+        console.error("❌ No userId found in token");
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+      
+      setUser({ ...payload, userId });
+      fetchTransactions(userId);
+    } catch (err) {
+      console.error("❌ JWT error:", err);
+      localStorage.removeItem("token");
+      navigate("/login");
+    }
+  }, [navigate]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    if (name === 'amount') {
-      const formatted = formatNumberWithDots(value);
-      setForm((prev) => ({ ...prev, amount: formatted }));
-    } else {
-      setForm((prev) => ({ ...prev, [name]: value }));
+  // Fetch transactions
+  const fetchTransactions = async (userId) => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      console.log("📊 Fetching transactions for userId:", userId);
+      
+      const res = await fetch(`http://localhost:5000/api/transactions?userId=${userId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.status === 401) {
+        console.error("❌ Unauthorized - token invalid");
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+
+      const data = await res.json();
+      console.log("💳 Transactions response:", data);
+      
+      if (data.success) {
+        setTransactions(data.data || []);
+        setFilteredTransactions(data.data || []);
+      } else {
+        console.error("❌ Error:", data.message);
+      }
+    } catch (err) {
+      console.error("❌ Error fetching transactions:", err);
+      alert("Gagal mengambil data transaksi");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSubmit = (e) => {
+  // Filter transactions
+  useEffect(() => {
+    let filtered = transactions;
+
+    if (filterType !== "all") {
+      filtered = filtered.filter((t) => t.type === filterType);
+    }
+
+    if (searchTerm) {
+      filtered = filtered.filter(
+        (t) =>
+          t.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          t.description?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    setFilteredTransactions(filtered);
+  }, [searchTerm, filterType, transactions]);
+
+  // Handle form submit
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!form.category || !form.amount || !form.date) {
-      alert('Mohon lengkapi data transaksi!');
+
+    if (!user || !user.userId) {
+      alert("Sesi telah berakhir. Silakan login kembali.");
+      navigate("/login");
       return;
     }
 
-    const transactionData = {
-      ...form,
-      amount: parseInt(form.amount.replace(/\./g, '')),
-    };
+    const trimmedCategory = formData.category.trim();
+    const trimmedAmount = formData.amount.toString().trim();
 
-    if (editingId) {
-      // Update existing transaction
-      setTransactions((prev) =>
-        prev.map((tx) => (tx.id === editingId ? { ...tx, ...transactionData } : tx))
-      );
-      setEditingId(null);
-    } else {
-      // Add new transaction
-      const newTx = {
-        id: Date.now(),
-        ...transactionData,
+    if (!trimmedCategory || !trimmedAmount || trimmedAmount === "0" || parseFloat(trimmedAmount) <= 0) {
+      alert("Kategori dan jumlah harus diisi dengan benar!");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("Sesi telah berakhir. Silakan login kembali.");
+      navigate("/login");
+      return;
+    }
+
+    try {
+      const url = editingId
+        ? `http://localhost:5000/api/transactions/${editingId}`
+        : "http://localhost:5000/api/transactions";
+
+      const method = editingId ? "PUT" : "POST";
+
+      const payload = {
+        user_id: user.userId,
+        type: formData.type,
+        category: trimmedCategory,
+        amount: parseFloat(trimmedAmount),
+        date: formData.date,
+        description: formData.description.trim(),
       };
-      setTransactions((prev) => [newTx, ...prev]);
-    }
 
-    // Reset form
-    setForm({ 
-      type: 'expense', 
-      category: '', 
-      amount: '', 
-      date: new Date().toISOString().split('T')[0], 
-      description: '' 
-    });
-    setIsFormOpen(false);
-  };
+      console.log("📤 Sending payload:", payload);
 
-  const handleEdit = (id) => {
-    const tx = transactions.find((t) => t.id === id);
-    if (tx) {
-      setForm({
-        type: tx.type,
-        category: tx.category,
-        amount: formatNumberWithDots(tx.amount.toString()),
-        date: tx.date,
-        description: tx.description || '',
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
       });
-      setEditingId(id);
-      setIsFormOpen(true);
+
+      const data = await res.json();
+      console.log("📥 Server response:", data);
+
+      if (res.status === 401) {
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+
+      if (data.success) {
+        // 🔥 Refresh transactions
+        await fetchTransactions(user.userId);
+        resetForm();
+        setShowModal(false);
+        alert(editingId ? "Transaksi berhasil diupdate" : "Transaksi berhasil ditambahkan");
+      } else {
+        alert(data.message || "Gagal menyimpan transaksi");
+      }
+    } catch (err) {
+      console.error("❌ Error saving transaction:", err);
+      alert("Terjadi kesalahan saat menyimpan transaksi");
     }
   };
 
-  const handleDelete = (id) => {
-    if (window.confirm('Yakin ingin menghapus transaksi ini?')) {
-      setTransactions((prev) => prev.filter((tx) => tx.id !== id));
+  // Handle delete
+  const handleDelete = async (id) => {
+    if (!confirm("Yakin ingin menghapus transaksi ini?")) return;
+
+    if (!user || !user.userId) {
+      alert("Sesi telah berakhir. Silakan login kembali.");
+      navigate("/login");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("Sesi telah berakhir. Silakan login kembali.");
+      navigate("/login");
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/transactions/${id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+
+      if (res.status === 401) {
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+
+      if (data.success) {
+        // 🔥 Refresh transactions
+        await fetchTransactions(user.userId);
+        alert("Transaksi berhasil dihapus");
+      } else {
+        alert(data.message || "Gagal menghapus transaksi");
+      }
+    } catch (err) {
+      console.error("❌ Error deleting transaction:", err);
+      alert("Terjadi kesalahan saat menghapus transaksi");
     }
   };
 
-  const handleCancel = () => {
-    setForm({ 
-      type: 'expense', 
-      category: '', 
-      amount: '', 
-      date: new Date().toISOString().split('T')[0], 
-      description: '' 
+  // Handle edit
+  const handleEdit = (transaction) => {
+    setEditingId(transaction.id);
+    setFormData({
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount.toString(),
+      date: transaction.date,
+      description: transaction.description || "",
+    });
+    setShowModal(true);
+  };
+
+  // Reset form
+  const resetForm = () => {
+    setFormData({
+      type: "expense",
+      category: "",
+      amount: "",
+      date: new Date().toISOString().split("T")[0],
+      description: "",
     });
     setEditingId(null);
-    setIsFormOpen(false);
   };
 
-  const filteredCategories = dummyCategories.filter((cat) => cat.type === form.type);
+  // 🔥 Navigate back with refresh flag
+  const handleBackToDashboard = () => {
+    navigate("/dashboard", { state: { refresh: true } });
+  };
+
+  // Calculate totals
+  const totalIncome = filteredTransactions
+    .filter((t) => t.type === "income")
+    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+  const totalExpense = filteredTransactions
+    .filter((t) => t.type === "expense")
+    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+  const balance = totalIncome - totalExpense;
+
+  if (loading && transactions.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          <div className="text-slate-100 text-xl">Memuat transaksi...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 text-slate-200 p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col gap-4">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">Transaksi Keuangan</h1>
-            <p className="text-sm md:text-base text-slate-400">Kelola semua pemasukan dan pengeluaran Anda</p>
+        {/* HEADER */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleBackToDashboard}
+              className="p-2 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-3xl font-bold">Transaksi</h1>
+              <p className="text-slate-400 text-sm">Kelola semua transaksi keuangan Anda</p>
+            </div>
           </div>
+
           <button
-            onClick={() => setIsFormOpen(!isFormOpen)}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-lg w-full md:w-auto"
+            onClick={() => {
+              resetForm();
+              setShowModal(true);
+            }}
+            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl font-semibold transition-all hover:scale-105"
           >
-            {isFormOpen ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-            {isFormOpen ? 'Tutup Form' : 'Tambah Transaksi'}
+            <Plus className="w-5 h-5" />
+            Tambah Transaksi
           </button>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-          <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 backdrop-blur-xl border border-emerald-500/30 rounded-xl md:rounded-2xl p-4 md:p-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 md:p-3 bg-emerald-500/20 rounded-lg md:rounded-xl">
-                <ArrowUpRight className="w-5 h-5 md:w-6 md:h-6 text-emerald-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs md:text-sm">Total Pemasukan</p>
-                <p className="text-lg md:text-2xl font-bold text-white">{formatCurrency(summary.income)}</p>
-              </div>
+        {/* SUMMARY CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-gradient-to-br from-emerald-600/20 to-emerald-700/10 border border-emerald-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-emerald-400 font-medium">Total Pemasukan</p>
+              <TrendingUp className="w-5 h-5 text-emerald-400" />
             </div>
+            <p className="text-3xl font-bold">{formatCurrency(totalIncome)}</p>
           </div>
 
-          <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 backdrop-blur-xl border border-rose-500/30 rounded-xl md:rounded-2xl p-4 md:p-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 md:p-3 bg-rose-500/20 rounded-lg md:rounded-xl">
-                <ArrowDownRight className="w-5 h-5 md:w-6 md:h-6 text-rose-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs md:text-sm">Total Pengeluaran</p>
-                <p className="text-lg md:text-2xl font-bold text-white">{formatCurrency(summary.expense)}</p>
-              </div>
+          <div className="bg-gradient-to-br from-rose-600/20 to-rose-700/10 border border-rose-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-rose-400 font-medium">Total Pengeluaran</p>
+              <TrendingDown className="w-5 h-5 text-rose-400" />
             </div>
+            <p className="text-3xl font-bold">{formatCurrency(totalExpense)}</p>
           </div>
 
-          <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/10 backdrop-blur-xl border border-blue-500/30 rounded-xl md:rounded-2xl p-4 md:p-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 md:p-3 bg-blue-500/20 rounded-lg md:rounded-xl">
-                <Wallet className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs md:text-sm">Saldo Bersih</p>
-                <p className="text-lg md:text-2xl font-bold text-white">{formatCurrency(summary.income - summary.expense)}</p>
-              </div>
+          <div className="bg-gradient-to-br from-blue-600/20 to-blue-700/10 border border-blue-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-blue-400 font-medium">Saldo</p>
+              <Calendar className="w-5 h-5 text-blue-400" />
             </div>
+            <p className={`text-3xl font-bold ${balance >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {formatCurrency(balance)}
+            </p>
           </div>
         </div>
 
-        {/* Form Section */}
-        {isFormOpen && (
-          <div className="bg-slate-800/40 backdrop-blur-xl border border-slate-700 rounded-xl md:rounded-2xl p-4 md:p-6 shadow-xl">
-            <h2 className="text-lg md:text-xl font-bold text-white mb-4 md:mb-6">
-              {editingId ? 'Edit Transaksi' : 'Tambah Transaksi Baru'}
-            </h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs md:text-sm font-medium text-slate-300 mb-2">Tipe Transaksi</label>
-                  <select
-                    name="type"
-                    value={form.type}
-                    onChange={handleChange}
-                    className="bg-slate-700 border border-slate-600 p-2.5 md:p-3 rounded-lg w-full text-sm md:text-base text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
-                  >
-                    <option value="income">Pemasukan</option>
-                    <option value="expense">Pengeluaran</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs md:text-sm font-medium text-slate-300 mb-2">Kategori</label>
-                  <select
-                    name="category"
-                    value={form.category}
-                    onChange={handleChange}
-                    required
-                    className="bg-slate-700 border border-slate-600 p-2.5 md:p-3 rounded-lg w-full text-sm md:text-base text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
-                  >
-                    <option value="">Pilih Kategori</option>
-                    {filteredCategories.map((cat) => (
-                      <option key={cat.id} value={cat.name}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs md:text-sm font-medium text-slate-300 mb-2">Jumlah</label>
-                  <input
-                    type="text"
-                    name="amount"
-                    value={form.amount}
-                    onChange={handleChange}
-                    placeholder="100.000"
-                    required
-                    className="bg-slate-700 border border-slate-600 p-2.5 md:p-3 rounded-lg w-full text-sm md:text-base text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs md:text-sm font-medium text-slate-300 mb-2">Tanggal</label>
-                  <input
-                    type="date"
-                    name="date"
-                    value={form.date}
-                    onChange={handleChange}
-                    required
-                    className="bg-slate-700 border border-slate-600 p-2.5 md:p-3 rounded-lg w-full text-sm md:text-base text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs md:text-sm font-medium text-slate-300 mb-2">Deskripsi (Opsional)</label>
-                <input
-                  type="text"
-                  name="description"
-                  value={form.description}
-                  onChange={handleChange}
-                  placeholder="Catatan tambahan..."
-                  className="bg-slate-700 border border-slate-600 p-2.5 md:p-3 rounded-lg w-full text-sm md:text-base text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
-                />
-              </div>
-
-              <div className="flex flex-col md:flex-row gap-3">
-                <button
-                  type="submit"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 md:py-3 rounded-lg text-sm md:text-base font-semibold transition duration-200"
-                >
-                  {editingId ? 'Update Transaksi' : 'Tambah Transaksi'}
-                </button>
-                {editingId && (
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    className="md:px-6 bg-slate-700 hover:bg-slate-600 text-white py-2.5 md:py-3 rounded-lg text-sm md:text-base font-semibold transition duration-200"
-                  >
-                    Batal
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Filter & Search */}
-        <div className="bg-slate-800/40 backdrop-blur-xl border border-slate-700 rounded-xl md:rounded-2xl p-3 md:p-4">
-          <div className="flex flex-col gap-3">
+        {/* FILTER & SEARCH */}
+        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
                 placeholder="Cari transaksi..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-slate-700 border border-slate-600 pl-9 md:pl-10 pr-4 py-2 md:py-2.5 rounded-lg w-full text-sm md:text-base text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                onClick={() => setFilterType('all')}
-                className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition ${
-                  filterType === 'all'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                }`}
+
+            <div className="relative">
+              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer"
               >
-                Semua
-              </button>
-              <button
-                onClick={() => setFilterType('income')}
-                className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition ${
-                  filterType === 'income'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                }`}
-              >
-                Pemasukan
-              </button>
-              <button
-                onClick={() => setFilterType('expense')}
-                className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition ${
-                  filterType === 'expense'
-                    ? 'bg-rose-600 text-white'
-                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                }`}
-              >
-                Pengeluaran
-              </button>
+                <option value="all">Semua Transaksi</option>
+                <option value="income">Pemasukan</option>
+                <option value="expense">Pengeluaran</option>
+              </select>
             </div>
+
+            {(searchTerm || filterType !== "all") && (
+              <button
+                onClick={() => {
+                  setSearchTerm("");
+                  setFilterType("all");
+                }}
+                className="px-4 py-3 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded-xl transition-all flex items-center justify-center gap-2"
+              >
+                <X className="w-5 h-5" />
+                Reset Filter
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Transaction List */}
-        <div className="bg-slate-800/40 backdrop-blur-xl border border-slate-700 rounded-xl md:rounded-2xl p-4 md:p-6 shadow-xl">
-          <h2 className="text-lg md:text-xl font-bold text-white mb-4 md:mb-6 flex items-center gap-2">
-            <Receipt className="w-5 h-5 md:w-6 md:h-6 text-emerald-400" />
+        {/* TRANSACTIONS LIST */}
+        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-6">
             Daftar Transaksi ({filteredTransactions.length})
           </h2>
 
-          {filteredTransactions.length === 0 ? (
-            <div className="text-center p-8 md:p-10 bg-slate-700/30 rounded-xl border border-slate-600">
-              <p className="text-base md:text-lg font-medium text-slate-400">Tidak ada transaksi yang ditemukan</p>
-              <p className="text-xs md:text-sm text-slate-500 mt-2">
-                {searchQuery ? 'Coba kata kunci lain' : 'Mulai catat transaksi Anda'}
-              </p>
+          {loading ? (
+            <div className="text-center py-12">
+              <p className="text-slate-400 text-lg">Loading...</p>
+            </div>
+          ) : filteredTransactions.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-slate-400 text-lg mb-4">Belum ada transaksi</p>
+              <button
+                onClick={() => {
+                  resetForm();
+                  setShowModal(true);
+                }}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold transition-all"
+              >
+                Tambah Transaksi Pertama
+              </button>
             </div>
           ) : (
-            <div className="space-y-2 md:space-y-3">
-              {filteredTransactions.map((tx) => {
-                const isIncome = tx.type === 'income';
-                const amountClass = isIncome ? 'text-emerald-400' : 'text-rose-400';
-                const iconBgClass = isIncome ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400';
+            <div className="space-y-3">
+              {filteredTransactions.map((tx) => (
+                <div
+                  key={tx.id}
+                  className="flex items-center justify-between p-4 bg-slate-700/30 hover:bg-slate-700/50 rounded-xl transition-all group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`p-3 rounded-lg ${
+                        tx.type === "income"
+                          ? "bg-emerald-500/20 text-emerald-400"
+                          : "bg-rose-500/20 text-rose-400"
+                      }`}
+                    >
+                      {tx.type === "income" ? (
+                        <TrendingUp className="w-5 h-5" />
+                      ) : (
+                        <TrendingDown className="w-5 h-5" />
+                      )}
+                    </div>
 
-                return (
-                  <div
-                    key={tx.id}
-                    className="flex items-center gap-2 md:gap-4 p-3 md:p-4 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg md:rounded-xl transition-all duration-200 border border-slate-600/50"
-                  >
-                    <div className={`p-2 md:p-3 rounded-lg md:rounded-xl flex-shrink-0 ${iconBgClass}`}>
-                      {isIncome ? <ArrowUpRight className="w-4 h-4 md:w-5 md:h-5" /> : <ArrowDownRight className="w-4 h-4 md:w-5 md:h-5" />}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm md:text-lg text-white truncate">{tx.category}</p>
-                      <p className="text-xs md:text-sm text-slate-400 truncate">{tx.description || 'Tidak ada deskripsi'}</p>
-                      <p className="text-xs text-slate-500 md:hidden">{tx.date}</p>
-                    </div>
-                    
-                    <div className="text-right flex-shrink-0">
-                      <p className={`font-bold text-sm md:text-xl ${amountClass}`}>
-                        {isIncome ? '+' : '-'} {formatCurrency(tx.amount)}
+                    <div>
+                      <p className="font-semibold text-lg">{tx.category}</p>
+                      <p className="text-sm text-slate-400">{tx.description || "Tidak ada deskripsi"}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {new Date(tx.date).toLocaleDateString("id-ID", {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
                       </p>
-                      <p className="text-xs text-slate-500 hidden md:block">{tx.date}</p>
                     </div>
+                  </div>
 
-                    <div className="flex gap-1 md:gap-2 flex-shrink-0">
-                      <button 
-                        onClick={() => handleEdit(tx.id)} 
-                        className="p-1.5 md:p-2 text-blue-400 hover:text-blue-300 hover:bg-slate-600 rounded-lg transition"
-                        title="Edit Transaksi"
+                  <div className="flex items-center gap-4">
+                    <p
+                      className={`text-2xl font-bold ${
+                        tx.type === "income" ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {tx.type === "income" ? "+" : "-"}
+                      {formatCurrency(tx.amount)}
+                    </p>
+
+                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleEdit(tx)}
+                        className="p-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg transition-all"
                       >
-                        <Edit3 className="w-4 h-4 md:w-5 md:h-5" />
+                        <Edit2 className="w-4 h-4" />
                       </button>
-                      <button 
-                        onClick={() => handleDelete(tx.id)} 
-                        className="p-1.5 md:p-2 text-rose-400 hover:text-rose-300 hover:bg-slate-600 rounded-lg transition"
-                        title="Hapus Transaksi"
+                      <button
+                        onClick={() => handleDelete(tx.id)}
+                        className="p-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 rounded-lg transition-all"
                       >
-                        <Trash2 className="w-4 h-4 md:w-5 md:h-5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* MODAL */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">
+                {editingId ? "Edit Transaksi" : "Tambah Transaksi"}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  resetForm();
+                }}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Tipe Transaksi</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, type: "income", category: "" })}
+                    className={`py-3 rounded-xl font-semibold transition-all ${
+                      formData.type === "income"
+                        ? "bg-emerald-600 text-white"
+                        : "bg-slate-700 text-slate-400 hover:bg-slate-600"
+                    }`}
+                  >
+                    Pemasukan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, type: "expense", category: "" })}
+                    className={`py-3 rounded-xl font-semibold transition-all ${
+                      formData.type === "expense"
+                        ? "bg-rose-600 text-white"
+                        : "bg-slate-700 text-slate-400 hover:bg-slate-600"
+                    }`}
+                  >
+                    Pengeluaran
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Kategori *</label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Pilih Kategori</option>
+                  {categories[formData.type].map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Jumlah *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  placeholder="0"
+                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Tanggal *</label>
+                <input
+                  type="date"
+                  value={formData.date}
+                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Deskripsi (Opsional)</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Catatan tambahan..."
+                  rows={3}
+                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowModal(false);
+                    resetForm();
+                  }}
+                  className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-semibold transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl font-semibold transition-all flex items-center justify-center gap-2"
+                >
+                  <Check className="w-5 h-5" />
+                  {editingId ? "Update" : "Simpan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
