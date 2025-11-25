@@ -1,4 +1,3 @@
-import { useAuth } from "../contexts/AuthContext";
 import { useNavigate, Link } from "react-router-dom";
 import { useState } from "react";
 import { motion } from "framer-motion";
@@ -6,12 +5,10 @@ import Input from "../components/common/Input";
 import Button from "../components/common/Button";
 
 export default function Login() {
-  const { login } = useAuth();
   const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -30,21 +27,33 @@ export default function Login() {
       });
 
       const data = await res.json();
+      console.log("📥 Login response:", data);
 
-      if (!res.ok) {
+      if (!res.ok || !data.success) {
         setLoading(false);
         return setError(data.message || "Login gagal");
       }
 
-      // simpan user + token dalam context
-      login(data.user, data.token);
+      // Backend: { success, message, data:{ token, user } }
+      const token = data.data.token;
+      const user = data.data.user;
 
+      console.log("✅ Login berhasil!");
+      console.log("👤 User:", user);
+      console.log("🔑 Token saved");
+
+      // Simpan token & user
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
+
+      // Redirect ke dashboard
       navigate("/dashboard");
     } catch (err) {
+      console.error("❌ Login error:", err);
       setError("Tidak dapat terhubung ke server");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
@@ -55,7 +64,6 @@ export default function Login() {
       </div>
 
       <div className="flex flex-col md:flex-row items-center justify-center gap-10 z-10 max-w-5xl w-full">
-        
         {/* Kiri */}
         <motion.div
           initial={{ opacity: 0, x: -30 }}
@@ -87,15 +95,18 @@ export default function Login() {
           </h2>
 
           {error && (
-            <p className="text-red-400 text-center mb-3 text-sm">{error}</p>
+            <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm">
+              {error}
+            </div>
           )}
 
           <Input
             label="Nama Pengguna"
             type="text"
-            placeholder="Masukkan nama..."
+            placeholder="Masukkan username..."
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            required
           />
 
           <Input
@@ -104,9 +115,14 @@ export default function Login() {
             placeholder="Masukkan password..."
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            required
           />
 
-          <Button className="w-full mt-6 bg-emerald-600 hover:bg-emerald-500 transition-all">
+          <Button 
+            type="submit"
+            className="w-full mt-6 bg-emerald-600 hover:bg-emerald-500 transition-all"
+            disabled={loading}
+          >
             {loading ? "Memproses..." : "Masuk"}
           </Button>
 
@@ -117,14 +133,7 @@ export default function Login() {
             </Link>
           </div>
 
-          <div className="mt-2 text-center text-sm">
-            <Link
-              to="/dashboard"
-              className="text-slate-500 hover:text-emerald-400 hover:underline transition"
-            >
-              Masuk sebagai Tamu
-            </Link>
-          </div>
+          {/* Removed "Masuk sebagai Tamu" - User must login */}
         </motion.form>
       </div>
     </div>
