@@ -1,39 +1,132 @@
-const service = require('../services/transactionService');
-const { success, error } = require('../utils/response');
 
-exports.list = async (req, res, next) => {
+// FILE: backend/src/controllers/transactionController.js
+const transactionService = require('../services/transactionService');
+
+/**
+ * GET all transactions for a user
+ */
+exports.getAllTransactions = async (req, res) => {
   try {
-    const list = await service.getAll(req.user.id);
-    return success(res, list, 'transactions fetched');
-  } catch (err) { next(err); }
+    const { userId, limit } = req.query;
+    const userIdToUse = userId || req.user?.userId || req.user?.id;
+
+    if (!userIdToUse) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID tidak ditemukan'
+      });
+    }
+
+    const transactions = await transactionService.getAllTransactions(userIdToUse, limit);
+
+    res.json({
+      success: true,
+      data: transactions,
+      count: transactions.length
+    });
+  } catch (error) {
+    console.error('❌ Error in getAllTransactions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data transaksi',
+      error: error.message
+    });
+  }
 };
 
-exports.get = async (req, res, next) => {
+/**
+ * CREATE new transaction
+ */
+exports.createTransaction = async (req, res) => {
   try {
-    const trx = await service.getById(Number(req.params.id), req.user.id);
-    if (!trx) return error(res, 'not found', 404);
-    return success(res, trx, 'transaction fetched');
-  } catch (err) { next(err); }
+    const transactionData = req.body;
+
+    // Validasi user_id
+    if (!transactionData.user_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID wajib diisi'
+      });
+    }
+
+    const transaction = await transactionService.createTransaction(transactionData);
+
+    res.status(201).json({
+      success: true,
+      message: 'Transaksi berhasil ditambahkan',
+      data: transaction
+    });
+
+  } catch (error) {
+    console.error('❌ Error in createTransaction:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Gagal menambahkan transaksi'
+    });
+  }
 };
 
-exports.create = async (req, res, next) => {
+/**
+ * UPDATE existing transaction
+ */
+exports.updateTransaction = async (req, res) => {
   try {
-    const saved = await service.create(req.body, req.user.id);
-    return success(res, saved, 'created');
-  } catch (err) { next(err); }
+    const { id } = req.params;
+    const transactionData = req.body;
+
+    const transaction = await transactionService.updateTransaction(id, transactionData);
+
+    res.json({
+      success: true,
+      message: 'Transaksi berhasil diupdate',
+      data: transaction
+    });
+
+  } catch (error) {
+    console.error('❌ Error in updateTransaction:', error);
+    
+    if (error.message === 'Transaksi tidak ditemukan') {
+      return res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Gagal mengupdate transaksi'
+    });
+  }
 };
 
-exports.update = async (req, res, next) => {
+/**
+ * DELETE transaction
+ */
+exports.deleteTransaction = async (req, res) => {
   try {
-    const updated = await service.update(Number(req.params.id), req.body, req.user.id);
-    if (!updated) return error(res, 'not found', 404);
-    return success(res, updated, 'updated');
-  } catch (err) { next(err); }
-};
+    const { id } = req.params;
 
-exports.remove = async (req, res, next) => {
-  try {
-    await service.remove(Number(req.params.id), req.user.id);
-    return success(res, null, 'deleted');
-  } catch (err) { next(err); }
+    const transaction = await transactionService.deleteTransaction(id);
+
+    res.json({
+      success: true,
+      message: 'Transaksi berhasil dihapus',
+      data: transaction
+    });
+
+  } catch (error) {
+    console.error('❌ Error in deleteTransaction:', error);
+    
+    if (error.message === 'Transaksi tidak ditemukan') {
+      return res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Gagal menghapus transaksi'
+    });
+  }
 };

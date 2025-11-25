@@ -1,22 +1,24 @@
-const jwt = require('jsonwebtoken');
-const { jwtSecret } = require('../config/appConfig');
+// authMiddleware.js
+const jwt = require("jsonwebtoken");
 
-exports.authMiddleware = (req, res, next) => {
+const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ success:false, message:'No token provided' });
 
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2) return res.status(401).json({ success:false, message:'Token error' });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, message: "Token tidak ditemukan." });
+  }
 
-  const scheme = parts[0];
-  const token = parts[1];
-  if (!/^Bearer$/i.test(scheme)) return res.status(401).json({ success:false, message:'Token malformatted' });
+  const token = authHeader.split(" ")[1];
+  const secretKey = process.env.JWT_SECRET || "your-secret-key";
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+    const decoded = jwt.verify(token, secretKey);
     req.user = { id: decoded.id, username: decoded.username };
-    return next();
+    next();
   } catch (err) {
-    return res.status(401).json({ success:false, message:'Token invalid' });
+    return res.status(401).json({ success: false, message: "Token tidak valid atau expired." });
   }
 };
+
+// **Export langsung sebagai function**
+module.exports = authenticateToken;
