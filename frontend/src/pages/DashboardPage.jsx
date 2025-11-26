@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   PieChart,
@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "../utils/formatCurrency";
 
+// Komponen Dashboard UTAMA
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -46,75 +47,51 @@ export default function Dashboard() {
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [insight, setInsight] = useState("");
   const [savingsRate, setSavingsRate] = useState(0);
-  const [monthlyGoal, setMonthlyGoal] = useState(2000000);
+  const [monthlyGoal, setMonthlyGoal] = useState(2000000); 
   const [timeOfDay, setTimeOfDay] = useState("pagi");
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // Status untuk tombol refresh
 
-  // Extract userId from JWT
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      console.log("❌ No token found, redirecting to login");
-      navigate("/login");
-      return;
-    }
-    try {
-      const payload = JSON.parse(atob(token.split(".")[1]));
-      console.log("✅ JWT Payload:", payload);
-      
-      const userId = payload.userId || payload.id;
-      
-      if (!userId) {
-        console.error("❌ No userId found in token");
-        localStorage.removeItem("token");
-        navigate("/login");
-        return;
-      }
-      
-      setUser({ ...payload, userId });
-      fetchDashboard(userId);
-    } catch (err) {
-      console.error("❌ JWT error:", err);
-      localStorage.removeItem("token");
-      navigate("/login");
-    }
-  }, [navigate]);
-
-  // 🔥 Auto-refresh when returning from transactions page
-  useEffect(() => {
-    if (location.state?.refresh && user?.userId) {
-      console.log("🔄 Auto-refreshing dashboard...");
-      fetchDashboard(user.userId);
-      // Clear the state to prevent infinite refresh
-      window.history.replaceState({}, document.title);
-    }
-  }, [location.state, user]);
-
+  // --- LOGIC FUNCTIONS ---
+  
   const useFallbackTrend = (userData) => {
     const days = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
-    const avgIncome = (userData?.total_income || 0) / 30;
-    const avgExpense = (userData?.total_expense || 0) / 30;
+    const avgIncome = (userData?.total_income || 0) / 4; 
+    const avgExpense = (userData?.total_expense || 0) / 4;
     
-    setTrend(
-      days.map((d) => ({
+    const fallbackTrendData = days.map((d, index) => {
+      const variationFactor = 0.8 + (Math.random() * 0.4); 
+      return {
         day: d,
-        income: avgIncome * 7,
-        expense: avgExpense * 7,
-      }))
-    );
+        income: avgIncome * (index === 6 ? 1.1 : variationFactor) * 0.25, 
+        expense: avgExpense * variationFactor * 0.25,
+      }
+    });
+    setTrend(fallbackTrendData);
   };
+    
+  const generateInsight = (inc, exp) => {
+    if (exp > inc) {
+      setInsight("⚠️ Pengeluaran melebihi pemasukan! Kurangi pengeluaran tidak penting.");
+    } else if (exp < inc * 0.3) { 
+      setInsight("🎉 Luar biasa! Kamu menghemat lebih dari 70% penghasilan. Tetap pertahankan!");
+    } else if (exp < inc * 0.7) {
+      setInsight("👍 Kondisi keuangan baik. Tingkat tabunganmu di atas rata-rata! Coba alokasikan ke investasi.");
+    } else {
+      setInsight("💡 Pertahankan kebiasaan baikmu. Coba tingkatkan tabungan 5% lagi untuk mencapai tujuanmu.");
+    }
+  };
+
 
   const fetchDashboard = async (userId) => {
     try {
-      setLoading(true);
+      if (!refreshing) {
+        setLoading(true);
+      }
       const token = localStorage.getItem("token");
       
-      console.log("📊 Fetching dashboard for userId:", userId);
-      
-      // 🔥 Fetch user data (with REAL-TIME calculated balance)
-      const userRes = await fetch(`http://localhost:5000/api/users/${userId}`, {
+      const userRes = await fetch(`http://localhost:5000/api/user/profile`, { 
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -125,18 +102,30 @@ export default function Dashboard() {
       }
       
       const userData = await userRes.json();
-      console.log("👤 User data:", userData);
 
       if (userData.success) {
-        // ✅ Balance is now calculated from transactions
-        setBalance(parseFloat(userData.data.balance) || 0);
-        setIncome(parseFloat(userData.data.total_income) || 0);
-        setExpense(parseFloat(userData.data.total_expense) || 0);
+        const totalIncome = parseFloat(userData.data.total_income) || 0;
+        const totalExpense = parseFloat(userData.data.total_expense) || 0;
+        const currentBalance = parseFloat(userData.data.balance) || 0; 
+
+        setBalance(currentBalance);
+        setIncome(totalIncome);
+        setExpense(totalExpense);
+
+        if (totalIncome > 0) {
+          const rate = (((totalIncome - totalExpense) / totalIncome) * 100).toFixed(1);
+          setSavingsRate(Math.max(0, parseFloat(rate)));
+        } else {
+            setSavingsRate(0);
+        }
+        
+        generateInsight(totalIncome, totalExpense);
+
       } else {
         console.warn("⚠️ User API returned success=false");
       }
 
-      // Fetch category summary
+      // --- Fetch Category Summary ---
       try {
         const categoryRes = await fetch(
           `http://localhost:5000/api/analytics/expenses-by-category/${userId}`,
@@ -149,13 +138,11 @@ export default function Dashboard() {
         
         if (categoryRes.ok) {
           const categoryData = await categoryRes.json();
-          console.log("📈 Category data:", categoryData);
-          
           if (categoryData.success && categoryData.data) {
             const summary = categoryData.data.map((cat) => ({
               name: cat.category,
-              value: parseFloat(cat.total),
-            }));
+              value: parseFloat(cat.total) || 0, 
+            })).filter(cat => cat.value > 0); 
             setCategorySummary(summary);
           }
         }
@@ -163,7 +150,7 @@ export default function Dashboard() {
         console.warn("⚠️ Category API error:", err.message);
       }
 
-      // Fetch recent transactions
+      // --- Fetch Recent Transactions ---
       try {
         const transactionsRes = await fetch(
           `http://localhost:5000/api/transactions?userId=${userId}&limit=5`,
@@ -176,8 +163,6 @@ export default function Dashboard() {
         
         if (transactionsRes.ok) {
           const transactionsData = await transactionsRes.json();
-          console.log("💳 Transactions data:", transactionsData);
-          
           if (transactionsData.success && transactionsData.data) {
             setRecentTransactions(transactionsData.data || []);
           }
@@ -186,7 +171,7 @@ export default function Dashboard() {
         console.warn("⚠️ Transactions API error:", err.message);
       }
 
-      // Fetch weekly trend
+      // --- Fetch Weekly Trend ---
       try {
         const trendRes = await fetch(
           `http://localhost:5000/api/analytics/weekly-trend/${userId}`,
@@ -199,12 +184,9 @@ export default function Dashboard() {
         
         if (trendRes.ok) {
           const trendData = await trendRes.json();
-          console.log("📊 Trend data:", trendData);
-          
           if (trendData.success && trendData.data && trendData.data.length > 0) {
             setTrend(trendData.data);
           } else {
-            console.log("📊 Using fallback trend data");
             useFallbackTrend(userData.data);
           }
         } else {
@@ -219,18 +201,6 @@ export default function Dashboard() {
       const hour = new Date().getHours();
       setTimeOfDay(hour < 12 ? "pagi" : hour < 18 ? "siang" : "malam");
 
-      // Calculate savings rate
-      const totalIncome = parseFloat(userData.data?.total_income) || 0;
-      const totalExpense = parseFloat(userData.data?.total_expense) || 0;
-      
-      if (totalIncome > 0) {
-        const rate = (((totalIncome - totalExpense) / totalIncome) * 100).toFixed(1);
-        setSavingsRate(Math.max(0, rate));
-      }
-
-      // Generate insight
-      generateInsight(totalIncome, totalExpense);
-
     } catch (err) {
       console.error("❌ Gagal fetch dashboard:", err);
     } finally {
@@ -239,35 +209,81 @@ export default function Dashboard() {
     }
   };
 
-  const generateInsight = (inc, exp) => {
-    if (exp > inc) {
-      setInsight("⚠️ Pengeluaran melebihi pemasukan! Kurangi pengeluaran tidak penting.");
-    } else if (exp < inc * 0.5) {
-      setInsight("🎉 Luar biasa! Kamu menghemat lebih dari 50% penghasilan.");
-    } else {
-      setInsight("💡 Pertahankan kebiasaan baikmu. Coba tingkatkan tabungan 5% lagi.");
+  // Extract userId from JWT & Initial Fetch
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      navigate("/login");
+      return;
     }
-  };
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      const userId = payload.userId || payload.id; 
+      
+      if (!userId) {
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+      
+      setUser({ ...payload, userId });
+      fetchDashboard(userId); 
+    } catch (err) {
+      console.error("❌ JWT error:", err);
+      localStorage.removeItem("token");
+      navigate("/login");
+    }
+  }, [navigate]);
 
-  // 🔥 Manual refresh function
+  // Auto-refresh when returning from transactions page
+  useEffect(() => {
+    if (location.state?.refresh && user?.userId) { 
+      fetchDashboard(user.userId);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, user, navigate, location.pathname]);
+
+
+  // Manual refresh function
   const handleRefresh = () => {
-    if (user?.userId) {
+    if (user?.userId && !refreshing) {
       setRefreshing(true);
       fetchDashboard(user.userId);
     }
   };
 
-  const healthData = [
-    { subject: "Tabungan", score: Math.min(savingsRate * 2, 100) },
-    { subject: "Pengeluaran", score: expense < income * 0.7 ? 85 : 60 },
-    { subject: "Pemasukan", score: income > 5000000 ? 90 : 70 },
-    { subject: "Budget", score: (expense / monthlyGoal) * 100 < 100 ? 80 : 50 },
-    { subject: "Investasi", score: 65 },
-  ];
+  // --- DERIVED STATE ---
+  const goalProgress = useMemo(() => {
+    if (monthlyGoal === 0) return 0;
+    return Math.min((expense / monthlyGoal) * 100, 100); 
+  }, [expense, monthlyGoal]);
+  
+  const healthData = useMemo(() => {
+    const totalScore = (
+      Math.min(savingsRate, 50) * 2 + 
+      (expense < income * 0.7 ? 20 : 0) + 
+      (income > 5000000 ? 10 : 0) + 
+      (goalProgress < 100 ? 10 : -10) 
+    );
+    Math.max(50, Math.min(totalScore, 100)); 
 
-  const goalProgress = (expense / monthlyGoal) * 100;
+    return [
+      { subject: "Tabungan", score: Math.min(savingsRate * 2, 100) }, 
+      { subject: "Pengeluaran", score: expense < income * 0.7 ? 90 : 50 }, 
+      { subject: "Pemasukan", score: income > 1000000 ? 80 : 50 }, 
+      { subject: "Budget", score: goalProgress < 90 ? 85 : 40 },
+      { subject: "Likuiditas", score: balance > 0 ? 95 : 50 }, 
+    ];
+  }, [savingsRate, expense, income, goalProgress, balance]);
+  
+  const averageHealthScore = useMemo(() => {
+    const sum = healthData.reduce((acc, item) => acc + item.score, 0);
+    return (sum / healthData.length).toFixed(0);
+  }, [healthData]);
 
-  const COLORS = ["#10b981", "#f59e0b", "#3b82f6", "#8b5cf6", "#ec4899"];
+
+  const COLORS = ["#10b981", "#f59e0b", "#3b82f6", "#8b5cf6", "#ec4899", "#ef4444", "#a8a29e"];
+  // -----------------------
 
   if (loading) {
     return (
@@ -283,6 +299,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
+        
         {/* HEADER WITH GREETING */}
         <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-2xl p-6 backdrop-blur-sm">
           <div className="flex items-start justify-between">
@@ -301,19 +318,21 @@ export default function Dashboard() {
               </p>
             </div>
 
-            {/* Quick Actions */}
+            {/* Quick Actions - Tombol Refresh */}
             <div className="flex gap-2">
               <button
                 onClick={handleRefresh}
-                disabled={refreshing}
+                disabled={refreshing} 
                 className="p-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all disabled:opacity-50"
                 title="Refresh Data"
               >
-                <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} /> 
               </button>
+              {/* Notifikasi & Settings */}
               <button
-                onClick={() => navigate("/settings")}
+                onClick={() => navigate("/notifications")}
                 className="p-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all relative"
+                title="Notifikasi"
               >
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full"></span>
@@ -321,6 +340,7 @@ export default function Dashboard() {
               <button
                 onClick={() => navigate("/settings")}
                 className="p-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all"
+                title="Pengaturan"
               >
                 <Settings className="w-5 h-5" />
               </button>
@@ -334,17 +354,17 @@ export default function Dashboard() {
           <div className="relative z-10">
             <div className="flex items-center gap-2 mb-2">
               <Wallet className="w-6 h-6" />
-              <p className="text-emerald-100 font-medium">Saldo Bersih</p>
+              <p className="text-emerald-100 font-medium">Saldo Bersih Saat Ini</p>
             </div>
             <h2 className="text-5xl font-bold mb-6">{formatCurrency(balance)}</h2>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                <p className="text-emerald-100 text-sm mb-1">Pemasukan</p>
+                <p className="text-emerald-100 text-sm mb-1">Pemasukan Bulan Ini</p>
                 <p className="text-2xl font-bold">{formatCurrency(income)}</p>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                <p className="text-emerald-100 text-sm mb-1">Pengeluaran</p>
+                <p className="text-emerald-100 text-sm mb-1">Pengeluaran Bulan Ini</p>
                 <p className="text-2xl font-bold">{formatCurrency(expense)}</p>
               </div>
             </div>
@@ -352,7 +372,7 @@ export default function Dashboard() {
             {/* Savings Rate Indicator */}
             <div className="mt-6 bg-white/10 backdrop-blur-sm rounded-xl p-4">
               <div className="flex justify-between items-center mb-2">
-                <p className="text-sm">Tingkat Tabungan</p>
+                <p className="text-sm">Tingkat Tabungan (Bulan Ini)</p>
                 <p className="text-xl font-bold">{savingsRate}%</p>
               </div>
               <div className="w-full bg-white/20 rounded-full h-2 mb-2">
@@ -362,11 +382,11 @@ export default function Dashboard() {
                 ></div>
               </div>
               <p className="text-xs text-emerald-100">
-                {savingsRate > 30
-                  ? "Sangat Baik! 🎉"
-                  : savingsRate > 20
-                  ? "Bagus! 👍"
-                  : "Perlu Ditingkatkan 💪"}
+                {savingsRate >= 40 
+                  ? "Sangat Baik! 🎉 Target 50/30/20 tercapai."
+                  : savingsRate >= 20
+                  ? "Bagus! 👍 Mendekati rekomendasi 20% tabungan."
+                  : "Perlu Ditingkatkan 💪 Coba kurangi pengeluaran tidak penting."}
               </p>
             </div>
           </div>
@@ -394,16 +414,16 @@ export default function Dashboard() {
             icon={<TrendingUp className="w-5 h-5" />}
             title="Pemasukan Total"
             value={formatCurrency(income)}
-            change="+12.5%"
-            positive={true}
+            change={income > 0 ? "Bulan ini" : "Belum ada data"}
+            positive={income > 0}
             color="emerald"
           />
           <StatCard
             icon={<TrendingDown className="w-5 h-5" />}
             title="Pengeluaran Total"
             value={formatCurrency(expense)}
-            change="-5.3%"
-            positive={true}
+            change={expense > 0 ? "Bulan ini" : "Belum ada data"}
+            positive={false} 
             color="rose"
           />
           <StatCard
@@ -411,15 +431,15 @@ export default function Dashboard() {
             title="Target Budget"
             value={`${goalProgress.toFixed(0)}%`}
             change={`${formatCurrency(Math.max(0, monthlyGoal - expense))} tersisa`}
-            positive={goalProgress < 100}
+            positive={expense <= monthlyGoal} 
             color="blue"
           />
           <StatCard
             icon={<Activity className="w-5 h-5" />}
-            title="Transaksi"
-            value={recentTransactions.length}
-            change="Transaksi terbaru"
-            positive={true}
+            title="Tingkat Tabungan"
+            value={`${savingsRate}%`}
+            change={savingsRate >= 20 ? "Tujuan tercapai" : "Perlu ditingkatkan"}
+            positive={savingsRate >= 20}
             color="purple"
           />
         </div>
@@ -434,7 +454,7 @@ export default function Dashboard() {
                   <BarChart3 className="w-5 h-5 text-blue-400" />
                   Tren Keuangan 7 Hari
                 </h3>
-                <p className="text-sm text-slate-400">Perbandingan pemasukan & pengeluaran</p>
+                <p className="text-sm text-slate-400">Perbandingan pemasukan & pengeluaran mingguan</p>
               </div>
             </div>
 
@@ -451,12 +471,13 @@ export default function Dashboard() {
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="day" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" tickFormatter={(v) => formatCurrency(v)} />
+                <YAxis stroke="#94a3b8" tickFormatter={(v) => formatCurrency(v, 0)} /> 
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "#1e293b",
                     border: "1px solid #334155",
                     borderRadius: "8px",
+                    color: "#fff",
                   }}
                   formatter={(v) => formatCurrency(v)}
                 />
@@ -482,21 +503,30 @@ export default function Dashboard() {
           <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 backdrop-blur-sm">
             <h3 className="text-xl font-bold mb-1 flex items-center gap-2">
               <Activity className="w-5 h-5 text-emerald-400" />
-              Skor Kesehatan
+              Skor Kesehatan Finansial
             </h3>
-            <p className="text-sm text-slate-400 mb-4">Skor: 78/100</p>
+            <p className="text-sm text-slate-400 mb-4">Skor: {averageHealthScore}/100</p> 
 
             <ResponsiveContainer width="100%" height={250}>
               <RadarChart data={healthData}>
                 <PolarGrid stroke="#475569" />
                 <PolarAngleAxis dataKey="subject" stroke="#94a3b8" />
-                <PolarRadiusAxis stroke="#94a3b8" />
+                <PolarRadiusAxis domain={[0, 100]} stroke="#94a3b8" /> 
                 <Radar
                   name="Skor"
                   dataKey="score"
                   stroke="#10b981"
                   fill="#10b981"
                   fillOpacity={0.6}
+                />
+                <Tooltip 
+                  contentStyle={{
+                    backgroundColor: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    color: "#fff",
+                  }}
+                  formatter={(value) => [`${value.toFixed(0)}/100`, "Skor"]} 
                 />
               </RadarChart>
             </ResponsiveContainer>
@@ -509,11 +539,11 @@ export default function Dashboard() {
           <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 backdrop-blur-sm">
             <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-purple-400" />
-              Kategori Pengeluaran
+              Kategori Pengeluaran Teratas
             </h3>
 
             {categorySummary.length > 0 ? (
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col sm:flex-row items-center gap-6">
                 <ResponsiveContainer width={200} height={200}>
                   <PieChart>
                     <Pie
@@ -534,9 +564,10 @@ export default function Dashboard() {
                   </PieChart>
                 </ResponsiveContainer>
 
-                <div className="flex-1 space-y-3">
+                <div className="flex-1 space-y-3 w-full sm:w-auto mt-4 sm:mt-0">
                   {categorySummary.slice(0, 5).map((cat, i) => {
-                    const percentage = expense > 0 ? ((cat.value / expense) * 100).toFixed(1) : 0;
+                    const totalExpense = expense > 0 ? expense : 1; 
+                    const percentage = ((cat.value / totalExpense) * 100).toFixed(1);
                     return (
                       <div key={i} className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -599,7 +630,7 @@ export default function Dashboard() {
                         )}
                       </div>
                       <div>
-                        <p className="font-medium">{tx.category}</p>
+                        <p className="font-medium">{tx.category || tx.description || 'Transaksi'}</p>
                         <p className="text-xs text-slate-400">
                           {new Date(tx.date).toLocaleDateString("id-ID")}
                         </p>
@@ -615,7 +646,7 @@ export default function Dashboard() {
                   </div>
                 ))
               ) : (
-                <p className="text-slate-400 text-center py-8">Belum ada transaksi</p>
+                <p className="text-slate-400 text-center py-8">Belum ada transaksi terbaru. Ayo catat transaksi pertamamu!</p>
               )}
             </div>
           </div>
@@ -639,13 +670,13 @@ export default function Dashboard() {
             icon={<Target className="w-5 h-5" />}
             label="Atur Target"
             color="blue"
-            onClick={() => navigate("/target-keuangan")}
+            onClick={() => navigate("/goals")} 
           />
           <QuickAction
             icon={<BarChart3 className="w-5 h-5" />}
             label="Lihat Laporan"
             color="purple"
-            onClick={() => navigate("/laporan")}
+            onClick={() => navigate("/reports")} 
           />
         </div>
       </div>
@@ -653,7 +684,8 @@ export default function Dashboard() {
   );
 }
 
-/* COMPONENTS */
+
+// StatCard dan QuickAction tetap sama dan berada di luar fungsi utama
 function StatCard({ icon, title, value, change, positive, color }) {
   const colorMap = {
     emerald: "from-emerald-500/20 to-emerald-600/10 border-emerald-500/30 text-emerald-400",
@@ -672,11 +704,13 @@ function StatCard({ icon, title, value, change, positive, color }) {
       <p className="text-slate-400 text-sm mb-1">{title}</p>
       <p className="text-2xl font-bold mb-2">{value}</p>
       <div className="flex items-center gap-1 text-xs">
-        {positive ? (
-          <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-        ) : (
-          <ArrowDownRight className="w-4 h-4 text-rose-400" />
-        )}
+        <span className={positive ? "text-emerald-400" : "text-rose-400"}>
+            {positive ? (
+                <ArrowUpRight className="w-4 h-4 inline" />
+            ) : (
+                <ArrowDownRight className="w-4 h-4 inline" />
+            )}
+        </span>
         <span className={positive ? "text-emerald-400" : "text-rose-400"}>{change}</span>
       </div>
     </div>

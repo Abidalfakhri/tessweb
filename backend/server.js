@@ -19,7 +19,7 @@ const analyticsRoutes = require('./src/routes/analyticsRoutes');
 
 // Use routes
 app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
+app.use('/api/user', userRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/analytics', analyticsRoutes);

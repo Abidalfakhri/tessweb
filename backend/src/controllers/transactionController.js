@@ -1,4 +1,3 @@
-
 // FILE: backend/src/controllers/transactionController.js
 const transactionService = require('../services/transactionService');
 
@@ -8,12 +7,13 @@ const transactionService = require('../services/transactionService');
 exports.getAllTransactions = async (req, res) => {
   try {
     const { userId, limit } = req.query;
-    const userIdToUse = userId || req.user?.userId || req.user?.id;
+    // Prioritaskan ID dari token, jika admin mungkin bisa pakai query param
+    const userIdToUse = req.user?.userId || req.user?.id || userId;
 
     if (!userIdToUse) {
       return res.status(400).json({
         success: false,
-        message: 'User ID tidak ditemukan'
+        message: 'User ID tidak ditemukan dalam token'
       });
     }
 
@@ -36,17 +36,32 @@ exports.getAllTransactions = async (req, res) => {
 
 /**
  * CREATE new transaction
+ * (PERBAIKAN UTAMA ADA DISINI)
  */
 exports.createTransaction = async (req, res) => {
   try {
-    const transactionData = req.body;
+    // 1. Ambil User ID dari Token (req.user diset oleh authMiddleware)
+    const userIdFromToken = req.user?.userId || req.user?.id;
 
-    // Validasi user_id
-    if (!transactionData.user_id) {
-      return res.status(400).json({
+    if (!userIdFromToken) {
+      return res.status(401).json({
         success: false,
-        message: 'User ID wajib diisi'
+        message: 'Unauthorized: User ID tidak ditemukan dalam token'
       });
+    }
+
+    // 2. Gabungkan user_id otomatis ke data yang dikirim frontend
+    const transactionData = {
+        ...req.body,
+        user_id: userIdFromToken // 🟢 INI KUNCINYA: Otomatis isi user_id dari token
+    };
+
+    // Validasi manual field lain jika perlu (opsional, service biasanya handle ini)
+    if (!transactionData.amount || !transactionData.category) {
+        return res.status(400).json({
+            success: false,
+            message: 'Amount dan Category wajib diisi'
+        });
     }
 
     const transaction = await transactionService.createTransaction(transactionData);
@@ -72,7 +87,14 @@ exports.createTransaction = async (req, res) => {
 exports.updateTransaction = async (req, res) => {
   try {
     const { id } = req.params;
-    const transactionData = req.body;
+    
+    // Ambil User ID dari token untuk memastikan user hanya mengedit data miliknya sendiri
+    const userIdFromToken = req.user?.userId || req.user?.id;
+
+    const transactionData = {
+        ...req.body,
+        user_id: userIdFromToken // Pastikan data tetap terikat ke user ini
+    };
 
     const transaction = await transactionService.updateTransaction(id, transactionData);
 
@@ -105,6 +127,8 @@ exports.updateTransaction = async (req, res) => {
 exports.deleteTransaction = async (req, res) => {
   try {
     const { id } = req.params;
+    // Idealnya service juga menerima userId untuk memastikan kepemilikan sebelum delete
+    // const userId = req.user?.userId || req.user?.id; 
 
     const transaction = await transactionService.deleteTransaction(id);
 
