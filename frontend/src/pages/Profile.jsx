@@ -1,362 +1,513 @@
-// src/pages/Profile.jsx
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { useAuth } from "@/contexts/AuthContext";
-import dummyTransactionsInit from "@/data/dummyTransactions";
-import { formatCurrency } from "@/utils/formatCurrency";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  FiEdit2,
-  FiSettings,
-  FiLogOut,
-  FiDownload,
-  FiChevronRight,
-} from "react-icons/fi";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
+  Edit2,
+  Download,
+  Loader,
+  Trash2,
+  User,
+  Mail,
+  AtSign,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  ArrowUpRight,
+  ArrowDownRight,
+  X
+} from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
+import { formatCurrency } from "../utils/formatCurrency"; // Pastikan path utils benar
 
-const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"];
+// --- KONSTANTA WARNA CHART ---
+const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#6366f1"];
 
 export default function Profile() {
-  const { user: authUser, logout, updateUser } = useAuth();
-  // Work on a local copy of transactions (so user can see delete etc without backend)
-  const [transactions, setTransactions] = useState(dummyTransactionsInit);
+  const navigate = useNavigate();
+  
+  // --- STATE MANAGEMENT ---
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [transactions, setTransactions] = useState([]);
   const [editOpen, setEditOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Form state untuk edit profile
   const [form, setForm] = useState({
-    name: authUser?.name || "",
-    email: authUser?.email || "",
-    avatar: authUser?.avatar || "/src/assets/avatar-default.png",
+    name: "",
+    email: "",
+    username: "",
   });
 
-  // statistics derived
-  const totals = useMemo(() => {
+  // --- DATA FETCHING ---
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+
+      // 1. Fetch User Profile
+      const userRes = await fetch("http://localhost:5000/api/user/profile", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      if (userRes.status === 401) {
+        localStorage.removeItem("token");
+        navigate("/login");
+        return;
+      }
+
+      const userData = await userRes.json();
+      
+      if (userData.success && userData.data) {
+        setUser(userData.data);
+        setForm({
+          name: userData.data.name,
+          email: userData.data.email,
+          username: userData.data.username,
+        });
+        // Update local storage agar sinkron
+        localStorage.setItem("user", JSON.stringify(userData.data));
+      }
+
+      // 2. Fetch Transactions
+      const transRes = await fetch("http://localhost:5000/api/transactions", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      if (transRes.ok) {
+        const transData = await transRes.json();
+        if (transData.success) {
+          setTransactions(transData.data || []);
+        }
+      }
+
+    } catch (error) {
+      console.error("❌ Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
+  // Initial Load
+  useEffect(() => {
+    // Cek data di localStorage dulu untuk render instan (Optimistic UI)
+    const storedUser = localStorage.getItem("user");
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        setForm({
+            name: parsedUser.name || "",
+            email: parsedUser.email || "",
+            username: parsedUser.username || "",
+        });
+        setLoading(false); // Bisa set false dulu biar ga loading lama
+      } catch (e) { console.error("Error parsing stored user", e); }
+    }
+    
+    // Fetch data segar dari API
+    fetchData();
+  }, [fetchData]);
+
+
+  
+  // 1. Ringkasan Statistik
+  const stats = useMemo(() => {
+    if (!transactions.length) return { totalIncome: 0, totalExpense: 0, count: 0, balance: 0 };
+
     const totalIncome = transactions
       .filter((t) => t.type === "income")
-      .reduce((s, t) => s + t.amount, 0);
+      .reduce((acc, t) => acc + parseFloat(t.amount), 0);
+
     const totalExpense = transactions
       .filter((t) => t.type === "expense")
-      .reduce((s, t) => s + t.amount, 0);
-    const count = transactions.length;
-    const avg = count ? Math.round((totalIncome + totalExpense) / count) : 0;
+      .reduce((acc, t) => acc + parseFloat(t.amount), 0);
 
-    // top category (expense)
-    const catMap = {};
-    transactions.forEach((t) => {
-      if (t.type === "expense") catMap[t.category] = (catMap[t.category] || 0) + t.amount;
-    });
-    const topCategory =
-      Object.keys(catMap).length === 0
-        ? "-"
-        : Object.entries(catMap).sort((a, b) => b[1] - a[1])[0][0];
-
-    return { totalIncome, totalExpense, count, avg, topCategory };
-  }, [transactions]);
-
-  // expense distribution for pie chart
-  const expenseDistribution = useMemo(() => {
-    const map = {};
-    transactions.forEach((t) => {
-      if (t.type === "expense") map[t.category] = (map[t.category] || 0) + t.amount;
-    });
-    return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [transactions]);
-
-  // monthly comparison: sum by YYYY-MM
-  const monthComparison = useMemo(() => {
-    const sums = {};
-    transactions.forEach((t) => {
-      const d = new Date(t.date);
-      if (isNaN(d)) return;
-      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      sums[k] = (sums[k] || 0) + (t.type === "expense" ? t.amount : -t.amount);
-    });
-    // sort keys descending
-    const keys = Object.keys(sums).sort((a, b) => (a < b ? 1 : -1));
-    const current = keys[0] || null;
-    const prev = keys[1] || null;
     return {
-      currentMonth: current ? { key: current, value: sums[current] } : null,
-      prevMonth: prev ? { key: prev, value: sums[prev] } : null,
+      totalIncome,
+      totalExpense,
+      balance: totalIncome - totalExpense,
+      count: transactions.length
     };
   }, [transactions]);
 
-  useEffect(() => {
-    // initialize edit form when authUser changes
-    if (authUser) {
-      setForm({
-        name: authUser.name,
-        email: authUser.email,
-        avatar: authUser.avatar || "/src/assets/avatar-default.png",
-      });
+  // 2. Distribusi Pengeluaran untuk Chart
+  const expenseData = useMemo(() => {
+    const expenses = transactions.filter(t => t.type === 'expense');
+    if (!expenses.length) return [];
+
+    const categoryMap = expenses.reduce((acc, curr) => {
+      const amount = parseFloat(curr.amount);
+      acc[curr.category] = (acc[curr.category] || 0) + amount;
+      return acc;
+    }, {});
+
+    return Object.entries(categoryMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value); // Urutkan dari terbesar
+  }, [transactions]);
+
+
+  // --- EVENT HANDLERS ---
+
+  const handleSaveProfile = async () => {
+    if (!form.name || !form.email || !form.username) {
+        alert("Semua field harus diisi!");
+        return;
     }
-  }, [authUser]);
 
-  // handlers
-  function handleDelete(id) {
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
-  }
+    setIsSaving(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("http://localhost:5000/api/user/profile", {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(form)
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        setUser(data.data);
+        localStorage.setItem("user", JSON.stringify(data.data)); // Update storage
+        setEditOpen(false);
+        alert("Profil berhasil diperbarui!");
+      } else {
+        alert(data.message || "Gagal memperbarui profil");
+      }
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      alert("Gagal terhubung ke server");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
-  function handleExportCSV() {
-    const headers = ["id,date,type,category,amount,description"];
-    const rows = transactions.map(
-      (t) =>
-        `${t.id},${t.date},${t.type},${JSON.stringify(t.category)},${t.amount},${JSON.stringify(
-          t.description || ""
-        )}`
+  const handleDeleteTransaction = async (id) => {
+    if (!window.confirm("Hapus transaksi ini?")) return;
+    
+    const prevTransactions = [...transactions];
+    setTransactions(prev => prev.filter(t => t.id !== id));
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://localhost:5000/api/transactions/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      
+      if (!res.ok) throw new Error("Gagal menghapus");
+      
+      // Refresh data user (saldo) karena transaksi dihapus
+      fetchData();
+    } catch (error) {
+      console.error("Delete failed:", error);
+      alert("Gagal menghapus transaksi");
+      setTransactions(prevTransactions); // Rollback jika gagal
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (!transactions.length) return alert("Tidak ada data untuk diexport");
+
+    const headers = ["ID,Tanggal,Tipe,Kategori,Nominal,Deskripsi"];
+    const rows = transactions.map((t) =>
+      `${t.id},${t.date},${t.type},${t.category},${t.amount},"${t.description || ""}"`
     );
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const csvContent = [headers, ...rows].join("\n");
+    
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "transactions_export.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `transaksi_${user.username}_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
-  function handleAvatarUpload(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => setForm((p) => ({ ...p, avatar: ev.target.result }));
-    reader.readAsDataURL(file);
-  }
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString('id-ID', {
+        day: 'numeric', month: 'short', year: 'numeric'
+    });
+  };
 
-  function handleSaveProfile() {
-    // local update (if updateUser exists in context, call it)
-    if (updateUser) updateUser(form);
-    setEditOpen(false);
-  }
 
-  if (!authUser) {
+  if (loading && !user) {
     return (
-      <div className="max-w-md mx-auto p-8 text-center space-y-6">
-        <h1 className="text-3xl font-bold text-white">Profil Pengguna</h1>
-        <p className="text-slate-400 text-sm leading-relaxed">
-          Untuk melihat informasi akun dan statistik keuangan, silakan login terlebih dahulu.
-        </p>
-        <Link to="/login" className="inline-block px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition">
-          Login Sekarang
-        </Link>
-        <p className="text-slate-500 text-xs">
-          Belum punya akun? <Link to="/register" className="underline text-emerald-400">Daftar di sini</Link>
-        </p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900">
+        <Loader className="w-10 h-10 text-emerald-500 animate-spin mb-4" />
+        <p className="text-slate-500 dark:text-slate-400">Memuat profil...</p>
       </div>
     );
   }
+
+  if (!user) return null; 
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-4xl mx-auto p-6 space-y-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-white">{authUser.name}</h1>
-          <p className="text-slate-400">Member since {authUser.createdAt || "—"}</p>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 p-4 md:p-8 text-slate-900 dark:text-slate-100">
+      <div className="max-w-6xl mx-auto space-y-8">
+        
+        {/* HEADER SECTION */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 className="text-3xl font-bold text-slate-800 dark:text-white">Profil Saya</h1>
+                <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola informasi akun dan tinjau aktivitas keuangan Anda.</p>
+            </div>
+            <div className="flex gap-3">
+                <button 
+                    onClick={() => setEditOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl transition-all shadow-sm"
+                >
+                    <Edit2 className="w-4 h-4" /> <span>Edit Profil</span>
+                </button>
+                <button 
+                    onClick={handleExportCSV}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all shadow-md shadow-emerald-500/20"
+                >
+                    <Download className="w-4 h-4" /> <span>Export CSV</span>
+                </button>
+            </div>
         </div>
 
-        <div className="flex gap-3 items-center">
-          <button onClick={() => setEditOpen(true)} className="btn btn-outline">
-            <FiEdit2 className="inline mr-2" /> Edit Profile
-          </button>
-          <Link to="/settings" className="btn btn-outline">Settings</Link>
-          <button onClick={handleExportCSV} className="btn btn-primary">
-            <FiDownload className="inline mr-2" /> Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* Profile card + stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left: Profile card */}
-        <div className="surface p-5 flex flex-col items-center gap-4">
-          <img src={form.avatar} alt="avatar" className="h-28 w-28 rounded-full border-2 border-emerald-500 object-cover shadow" />
-          <div className="text-center">
-            <h2 className="text-lg font-semibold text-white">{authUser.name}</h2>
-            <p className="text-slate-400 text-sm">{authUser.email}</p>
-          </div>
-
-          <div className="w-full mt-2 space-y-2">
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>Transaksi</span>
-              <strong className="text-white">{totals.count}</strong>
-            </div>
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>Pemasukan</span>
-              <strong className="text-emerald-400">{formatCurrency(totals.totalIncome)}</strong>
-            </div>
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>Pengeluaran</span>
-              <strong className="text-rose-400">{formatCurrency(totals.totalExpense)}</strong>
-            </div>
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>Rata-rata/transaksi</span>
-              <strong className="text-white">{formatCurrency(totals.avg)}</strong>
-            </div>
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>Kategori terbanyak</span>
-              <strong className="text-amber-400">{totals.topCategory}</strong>
-            </div>
-          </div>
-        </div>
-
-        {/* Middle: Pie chart (expense distribution) */}
-        <div className="surface p-5 flex flex-col">
-          <h3 className="text-lg font-semibold mb-3">Distribusi Pengeluaran</h3>
-          {expenseDistribution.length > 0 ? (
-            <div className="flex-1 flex flex-col md:flex-row items-center gap-4">
-              <div className="w-full md:w-2/3 h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={expenseDistribution} dataKey="value" nameKey="name" outerRadius={70} innerRadius={28} paddingAngle={4}>
-                      {expenseDistribution.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v) => formatCurrency(v)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="flex-1">
-                <ul className="space-y-2">
-                  {expenseDistribution.map((row, i) => (
-                    <li key={row.name} className="flex justify-between items-center">
-                      <div className="flex items-center gap-3">
-                        <span className="block w-3 h-3 rounded" style={{ background: COLORS[i % COLORS.length] }} />
-                        <span className="text-sm text-slate-300">{row.name}</span>
-                      </div>
-                      <strong className="text-sm text-white">{formatCurrency(row.value)}</strong>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <p className="text-slate-400">Belum ada data pengeluaran untuk menampilkan chart.</p>
-          )}
-        </div>
-
-        {/* Right: Monthly comparison & quick actions */}
-        <div className="surface p-5 flex flex-col justify-between">
-          <div>
-            <h3 className="text-lg font-semibold mb-3">Ringkasan Bulanan</h3>
-
-            <div className="space-y-3">
-              <div className="flex justify-between text-sm text-slate-400">
-                <span>{monthComparison.currentMonth?.key || "Bulan ini"}</span>
-                <strong className={`${
-                  (monthComparison.currentMonth?.value || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}>
-                  {monthComparison.currentMonth ? formatCurrency(monthComparison.currentMonth.value) : "-"}
-                </strong>
-              </div>
-              <div className="flex justify-between text-sm text-slate-400">
-                <span>{monthComparison.prevMonth?.key || "Bulan sebelumnya"}</span>
-                <strong className={`${
-                  (monthComparison.prevMonth?.value || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}>
-                  {monthComparison.prevMonth ? formatCurrency(monthComparison.prevMonth.value) : "-"}
-                </strong>
-              </div>
-              {monthComparison.currentMonth && monthComparison.prevMonth && (
-                <div className="mt-2 text-sm text-slate-300">
-                  Perubahan:{" "}
-                  <strong className={monthComparison.currentMonth.value - monthComparison.prevMonth.value >= 0 ? "text-emerald-400" : "text-rose-400"}>
-                    {Math.round(((monthComparison.currentMonth.value - monthComparison.prevMonth.value) / Math.max(1, Math.abs(monthComparison.prevMonth.value))) * 100)}%
-                  </strong>
+        {/* MAIN GRID */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* 1. PROFILE CARD */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center h-fit">
+                <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-emerald-400 to-cyan-500 p-1 mb-4 shadow-lg">
+                    <div className="w-full h-full rounded-full bg-white dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+                        {/* Placeholder Avatar - Bisa diganti img src */}
+                        <span className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-tr from-emerald-500 to-cyan-600">
+                            {user.name.charAt(0).toUpperCase()}
+                        </span>
+                    </div>
                 </div>
-              )}
+                
+                <h2 className="text-xl font-bold text-slate-800 dark:text-white">{user.name}</h2>
+                <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">@{user.username}</p>
+
+                <div className="w-full space-y-3 text-left">
+                    <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl">
+                        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+                            <Mail className="w-4 h-4" />
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Email</p>
+                            <p className="text-sm font-medium truncate max-w-[200px]">{user.email}</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl">
+                        <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
+                            <Wallet className="w-4 h-4" />
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Saldo Saat Ini</p>
+                            <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                                {formatCurrency(user.balance || stats.balance)}
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
 
-          <div className="mt-6 flex flex-col gap-3">
-            <Link to="/transactions" className="btn btn-outline flex items-center justify-center gap-2">
-              Lihat Transaksi <FiChevronRight />
-            </Link>
-            <Link to="/settings" className="btn btn-outline flex items-center justify-center gap-2">
-              Pengaturan Akun <FiSettings />
-            </Link>
-            <button onClick={() => { logout(); }} className="btn btn-danger w-full">
-              <FiLogOut /> Logout
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent transactions list */}
-      <div className="surface p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold">Transaksi Terbaru</h3>
-          <div className="flex items-center gap-2">
-            <button onClick={handleExportCSV} className="btn btn-outline text-sm">Export CSV</button>
-          </div>
-        </div>
-
-        {transactions.length === 0 ? (
-          <p className="text-slate-400 text-center py-8">Belum ada transaksi</p>
-        ) : (
-          <div className="divide-y divide-slate-700">
-            {transactions.slice(0, 8).map((tx) => (
-              <div key={tx.id} className="py-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${tx.type === "income" ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
-                    {tx.type === "income" ? "＋" : "−"}
-                  </div>
-                  <div>
-                    <div className="font-medium text-white">{tx.category}</div>
-                    <div className="text-xs text-slate-400">{tx.description || "-"}</div>
-                    <div className="text-xs text-slate-500">{tx.date}</div>
-                  </div>
+            {/* 2. STATISTICS & CHART AREA (Spans 2 cols on large screens) */}
+            <div className="lg:col-span-2 space-y-6">
+                
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-5 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/30 rounded-2xl flex justify-between items-start">
+                        <div>
+                            <p className="text-slate-500 dark:text-emerald-400/80 text-sm font-medium mb-1">Total Pemasukan</p>
+                            <h3 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(stats.totalIncome)}</h3>
+                        </div>
+                        <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-400">
+                            <TrendingUp className="w-5 h-5" />
+                        </div>
+                    </div>
+                    <div className="p-5 bg-rose-50 dark:bg-rose-900/10 border border-rose-100 dark:border-rose-800/30 rounded-2xl flex justify-between items-start">
+                        <div>
+                            <p className="text-slate-500 dark:text-rose-400/80 text-sm font-medium mb-1">Total Pengeluaran</p>
+                            <h3 className="text-2xl font-bold text-rose-600 dark:text-rose-400">{formatCurrency(stats.totalExpense)}</h3>
+                        </div>
+                        <div className="p-2 bg-rose-100 dark:bg-rose-900/30 rounded-lg text-rose-600 dark:text-rose-400">
+                            <TrendingDown className="w-5 h-5" />
+                        </div>
+                    </div>
                 </div>
 
-                <div className="text-right">
-                  <div className={`font-semibold ${tx.type === "income" ? "text-emerald-400" : "text-rose-400"}`}>
-                    {formatCurrency(tx.amount)}
-                  </div>
-                  <div className="mt-1 flex gap-2 justify-end">
-                    <button onClick={() => handleDelete(tx.id)} className="text-xs text-rose-300 hover:text-rose-400">Hapus</button>
-                  </div>
+                {/* Chart Section */}
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-bold mb-6">Analisis Pengeluaran</h3>
+                    {expenseData.length > 0 ? (
+                        <div className="flex flex-col md:flex-row items-center justify-center gap-8">
+                            <div className="w-full md:w-1/2 h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={expenseData}
+                                            cx="50%" cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={80}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {expenseData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip 
+                                            formatter={(value) => formatCurrency(value)}
+                                            contentStyle={{ backgroundColor: '#1e293b', borderRadius: '8px', border: 'none', color: '#fff' }}
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="w-full md:w-1/2 space-y-3">
+                                {expenseData.slice(0, 5).map((entry, index) => (
+                                    <div key={index} className="flex items-center justify-between text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                                            <span className="text-slate-600 dark:text-slate-300">{entry.name}</span>
+                                        </div>
+                                        <span className="font-medium">{formatCurrency(entry.value)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="h-48 flex flex-col items-center justify-center text-slate-400">
+                            <p>Belum ada data pengeluaran</p>
+                        </div>
+                    )}
                 </div>
-              </div>
-            ))}
-          </div>
+
+                {/* Recent Activity List */}
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold">Aktivitas Terbaru</h3>
+                        <button 
+                            onClick={() => navigate('/transactions')}
+                            className="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1"
+                        >
+                            Lihat Semua <ArrowUpRight className="w-4 h-4" />
+                        </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        {transactions.slice(0, 5).map((tx) => (
+                            <div key={tx.id} className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-xl transition-colors group">
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-lg ${tx.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'} dark:bg-opacity-20`}>
+                                        {tx.type === 'income' ? <ArrowDownRight className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                                    </div>
+                                    <div>
+                                        <p className="font-medium text-slate-800 dark:text-slate-200">{tx.category}</p>
+                                        <p className="text-xs text-slate-500">{formatDate(tx.date)}</p>
+                                    </div>
+                                </div>
+                                <div className="text-right flex items-center gap-4">
+                                    <p className={`font-bold ${tx.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                        {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                                    </p>
+                                    <button 
+                                        onClick={() => handleDeleteTransaction(tx.id)}
+                                        className="opacity-0 group-hover:opacity-100 p-2 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-all"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                        {transactions.length === 0 && (
+                            <p className="text-center text-slate-400 py-4">Tidak ada transaksi terbaru</p>
+                        )}
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        {/* EDIT MODAL */}
+        {editOpen && (
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="bg-white dark:bg-slate-800 w-full max-w-md rounded-2xl p-6 shadow-2xl border border-slate-200 dark:border-slate-700 transform transition-all scale-100">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-xl font-bold">Edit Profil</h3>
+                        <button onClick={() => setEditOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nama Lengkap</label>
+                            <div className="relative">
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <input 
+                                    type="text" 
+                                    value={form.name}
+                                    onChange={(e) => setForm({...form, name: e.target.value})}
+                                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    placeholder="Nama Anda"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Username</label>
+                            <div className="relative">
+                                <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <input 
+                                    type="text" 
+                                    value={form.username}
+                                    onChange={(e) => setForm({...form, username: e.target.value})}
+                                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    placeholder="username"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+                            <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <input 
+                                    type="email" 
+                                    value={form.email}
+                                    onChange={(e) => setForm({...form, email: e.target.value})}
+                                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    placeholder="email@contoh.com"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-8 flex gap-3">
+                        <button 
+                            onClick={() => setEditOpen(false)}
+                            className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl font-medium transition-colors"
+                        >
+                            Batal
+                        </button>
+                        <button 
+                            onClick={handleSaveProfile}
+                            disabled={isSaving}
+                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-500/30 disabled:opacity-70 flex justify-center items-center gap-2"
+                        >
+                            {isSaving && <Loader className="w-4 h-4 animate-spin" />}
+                            {isSaving ? "Menyimpan..." : "Simpan Perubahan"}
+                        </button>
+                    </div>
+                </div>
+            </div>
         )}
+
       </div>
-
-      {/* Edit Profile Modal */}
-      {editOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setEditOpen(false)} />
-          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="relative z-50 w-full max-w-lg surface p-6">
-            <h3 className="text-lg font-semibold mb-3">Edit Profil</h3>
-
-            <div className="flex gap-4 items-start">
-              <div>
-                <img src={form.avatar} alt="avatar" className="h-20 w-20 rounded-full border-2 border-emerald-500 object-cover" />
-                <label className="mt-2 block text-sm text-slate-300 cursor-pointer">
-                  <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-                  <span className="underline text-emerald-400">Ganti foto</span>
-                </label>
-              </div>
-
-              <div className="flex-1 space-y-3">
-                <div>
-                  <label className="text-sm text-slate-400">Nama</label>
-                  <input className="w-full mt-1 p-2 rounded border border-slate-700 bg-slate-900 text-white" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="text-sm text-slate-400">Email</label>
-                  <input className="w-full mt-1 p-2 rounded border border-slate-700 bg-slate-900 text-white" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => setEditOpen(false)} className="btn btn-outline">Batal</button>
-              <button onClick={handleSaveProfile} className="btn btn-primary">Simpan</button>
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </motion.div>
+    </div>
   );
 }

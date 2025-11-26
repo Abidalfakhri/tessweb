@@ -1,7 +1,3 @@
--- ============================================
--- DATABASE MIGRATION - POSTGRESQL VERSION
--- ============================================
-
 -- 1. Tambah kolom balance, total_income, total_expense
 ALTER TABLE users 
 ADD COLUMN IF NOT EXISTS balance NUMERIC(15, 2) DEFAULT 0,
@@ -30,10 +26,6 @@ SET
 -- 3. Index
 CREATE INDEX IF NOT EXISTS idx_user_balance ON users(id, balance);
 CREATE INDEX IF NOT EXISTS idx_transaction_user_type_date ON transactions(user_id, type, date);
-
--- ============================================
--- COMPLETE SCHEMA
--- ============================================
 
 -- Users Table
 CREATE TABLE IF NOT EXISTS users (
@@ -124,9 +116,7 @@ CREATE TABLE IF NOT EXISTS budget_goals (
   UNIQUE (user_id, category, month, year)
 );
 
--- ============================================
 -- SAMPLE DATA
--- ============================================
 
 -- Insert sample user
 WITH inserted AS (
