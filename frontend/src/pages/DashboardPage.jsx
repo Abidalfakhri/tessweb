@@ -328,15 +328,7 @@ export default function Dashboard() {
               >
                 <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} /> 
               </button>
-              {/* Notifikasi & Settings */}
-              <button
-                onClick={() => navigate("/notifications")}
-                className="p-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all relative"
-                title="Notifikasi"
-              >
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full"></span>
-              </button>
+              {/* Settings */}
               <button
                 onClick={() => navigate("/settings")}
                 className="p-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all"
@@ -670,13 +662,13 @@ export default function Dashboard() {
             icon={<Target className="w-5 h-5" />}
             label="Atur Target"
             color="blue"
-            onClick={() => navigate("/goals")} 
+            onClick={() => navigate("/target-keuangan")} 
           />
           <QuickAction
             icon={<BarChart3 className="w-5 h-5" />}
             label="Lihat Laporan"
             color="purple"
-            onClick={() => navigate("/reports")} 
+            onClick={() => navigate("/laporan")} 
           />
         </div>
       </div>
