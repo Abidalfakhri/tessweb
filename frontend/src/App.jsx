@@ -12,7 +12,6 @@ import Categories from "./pages/Categories";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import Mutasi from "./pages/Mutasi";
-import Dompet from "./pages/Dompet";
 import TargetKeuangan from './pages/TargetKeuangan';
 import Laporan from './pages/Laporan';
 
@@ -41,7 +40,6 @@ function App() {
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/mutasi" element={<Mutasi />} />
               <Route path="/categories" element={<Categories />} />
-              <Route path="/dompet" element={<Dompet />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/target-keuangan" element={<TargetKeuangan />} />

@@ -119,19 +119,7 @@ export default function Sidebar({ open, onClose }) {
                   <span>Mutasi</span>
                 </NavLink>
 
-                {/* 4. Dompet */}
-                <NavLink
-                  to="/dompet"
-                  className={({ isActive }) =>
-                    `${linkBase} ${isActive ? activeLink : ""}`
-                  }
-                  onClick={onClose}
-                >
-                  <FaWallet size={18} />
-                  <span>Dompet</span>
-                </NavLink>
-
-                {/* 5. Target Keuangan */}
+                {/* 4. Target Keuangan */}
                 <NavLink
                   to="/target-keuangan"
                   className={({ isActive }) =>
@@ -143,7 +131,7 @@ export default function Sidebar({ open, onClose }) {
                   <span>Target Keuangan</span>
                 </NavLink>
 
-                {/* 6. Laporan Analitik */}
+                {/* 5. Laporan Analitik */}
                 <NavLink
                   to="/laporan"
                   className={({ isActive }) =>
@@ -155,7 +143,7 @@ export default function Sidebar({ open, onClose }) {
                   <span>Laporan Analitik</span>
                 </NavLink>
 
-                {/* 7. Kategori */}
+                {/* 6. Kategori */}
                 <NavLink
                   to="/categories"
                   className={({ isActive }) =>
